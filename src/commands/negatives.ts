@@ -36,17 +36,38 @@ export function buildNegativesPlan(rp: ResolvedProfile, campaignId: string, term
   })
 }
 
+export function buildAdgroupNegativesPlan(rp: ResolvedProfile, adGroupId: string, terms: string[], match: MatchType): Plan {
+  const customerId = googleCustomerId(rp.profile)
+  if (!terms.length) throw new Error('no terms to add')
+  return createPlan({
+    profile: rp.name,
+    platform: 'google',
+    summary: `add ${terms.length} ${match.toLowerCase()} negatives → ad group ${adGroupId}`,
+    ops: terms.map(t => ({
+      kind: 'google.ad_group_negative.create' as const,
+      customerId,
+      adGroupId,
+      text: t,
+      matchType: match,
+      describe: `+ negative [${match}] "${t}" → ad group ${adGroupId}`,
+    })),
+  })
+}
+
 export async function runNegatives(
   action: 'plan' | 'add',
   source: string | undefined,
-  opts: { profile?: string; terms?: string; campaign?: string; match?: string; apply?: boolean },
+  opts: { profile?: string; terms?: string; campaign?: string; adgroup?: string; match?: string; apply?: boolean },
 ): Promise<void> {
-  if (!opts.campaign) throw new Error('--campaign <id> is required (campaign-level negatives in v0.1; shared sets are on the roadmap)')
+  if (!opts.campaign && !opts.adgroup) throw new Error('pass --campaign <id> or --adgroup <id> (shared sets are on the roadmap)')
+  if (opts.campaign && opts.adgroup) throw new Error('pass either --campaign or --adgroup, not both')
   const match = (opts.match ?? 'exact').toUpperCase() as MatchType
   if (!MATCH_TYPES.includes(match)) throw new Error(`--match must be one of: ${MATCH_TYPES.join(', ').toLowerCase()}`)
   const rp = resolveProfile(opts.profile)
   const terms = await readTermsInput(source === '-', opts.terms)
-  const plan = buildNegativesPlan(rp, opts.campaign, terms, match)
+  const plan = opts.adgroup
+    ? buildAdgroupNegativesPlan(rp, opts.adgroup, terms, match)
+    : buildNegativesPlan(rp, opts.campaign!, terms, match)
   console.log(`${plan.id}: ${plan.summary}`)
   if (action === 'add' && opts.apply) {
     const receipt = await applyPlan(plan, rp.profile, { validateOnly: false })

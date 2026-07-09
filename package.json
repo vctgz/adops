@@ -1,17 +1,38 @@
 {
   "name": "adops",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The Google Ads CLI Google never shipped: browse and bulk-edit your account from the terminal, plus cross-platform reporting for Meta.",
-  "keywords": ["google-ads", "meta-ads", "adops", "advertising", "ppc", "cli", "gaql", "marketing", "ad-operations"],
+  "keywords": [
+    "google-ads",
+    "meta-ads",
+    "adops",
+    "advertising",
+    "ppc",
+    "cli",
+    "gaql",
+    "marketing",
+    "ad-operations"
+  ],
   "homepage": "https://adops.sh",
-  "repository": { "type": "git", "url": "git+https://github.com/vctgz/adops.git" },
-  "bugs": { "url": "https://github.com/vctgz/adops/issues" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vctgz/adops.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vctgz/adops/issues"
+  },
   "author": "Victor Gonzalez",
   "license": "MIT",
   "type": "module",
-  "bin": { "adops": "dist/cli.js" },
-  "files": ["dist"],
-  "engines": { "node": ">=20" },
+  "bin": {
+    "adops": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",

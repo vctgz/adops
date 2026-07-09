@@ -14,6 +14,12 @@ export function setFetchImpl(f: FetchLike | null): void {
   impl = f ?? ((...args) => globalThis.fetch(...args))
 }
 
+let debug = false
+/** Enabled by the global --debug flag; dumps request lines and error bodies to stderr. */
+export function setDebug(on: boolean): void {
+  debug = on
+}
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 export interface RequestOpts {
@@ -34,6 +40,7 @@ export async function request<T = any>(url: string, init: RequestInit = {}, opts
   const retries = opts.retries ?? 3
   const base = Number(process.env.ADOPS_RETRY_BASE_MS ?? 500)
   let attempt = 0
+  if (debug) console.error(`adops[debug] → ${init.method ?? 'GET'} ${url}`)
   for (;;) {
     const res = await impl(url, init)
     const usage = res.headers.get('x-business-use-case-usage')
@@ -47,6 +54,7 @@ export async function request<T = any>(url: string, init: RequestInit = {}, opts
     let body: any
     try { body = text ? JSON.parse(text) : null } catch { body = text }
     if (!res.ok && (opts.okOnly ?? true)) {
+      if (debug) console.error(`adops[debug] ← ${res.status} ${typeof body === 'string' ? body : JSON.stringify(body)}`)
       throw new HttpError(res.status, apiErrorMessage(body) ?? `HTTP ${res.status} from ${new URL(url).host}`, body)
     }
     return { status: res.status, headers: res.headers, redirected: res.redirected, body }

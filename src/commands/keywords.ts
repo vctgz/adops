@@ -7,12 +7,24 @@ import { gaqlSearch } from '../platforms/google.js'
 
 const MATCH_TYPES: MatchType[] = ['EXACT', 'PHRASE', 'BROAD']
 
-export async function runKeywordsList(opts: { profile?: string; adgroup?: string; json?: boolean; csv?: boolean }): Promise<void> {
+/** Quality Score component enums → compact labels for the table. */
+export const shortQs = (v: unknown): string => {
+  const m: Record<string, string> = { ABOVE_AVERAGE: 'above', AVERAGE: 'avg', BELOW_AVERAGE: 'below' }
+  return m[String(v ?? '')] ?? '—'
+}
+
+const QS_FIELDS = 'ad_group_criterion.quality_info.quality_score, ad_group_criterion.quality_info.search_predicted_ctr, ad_group_criterion.quality_info.creative_quality_score, ad_group_criterion.quality_info.post_click_quality_score'
+
+export function keywordsQuery(adgroup?: string, qs?: boolean): string {
+  const where = ["ad_group_criterion.status != 'REMOVED'", 'segments.date DURING LAST_30_DAYS']
+  if (adgroup) where.push(`ad_group.id = ${adgroup}`)
+  const fields = 'ad_group.id, ad_group_criterion.criterion_id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status, ad_group_criterion.effective_cpc_bid_micros, metrics.cost_micros, metrics.conversions' + (qs ? `, ${QS_FIELDS}` : '')
+  return `SELECT ${fields} FROM keyword_view WHERE ${where.join(' AND ')} ORDER BY metrics.cost_micros DESC`
+}
+
+export async function runKeywordsList(opts: { profile?: string; adgroup?: string; qs?: boolean; json?: boolean; csv?: boolean }): Promise<void> {
   const rp = resolveProfile(opts.profile)
-  const where = ["ad_group_criterion.status != 'REMOVED'", "segments.date DURING LAST_30_DAYS"]
-  if (opts.adgroup) where.push(`ad_group.id = ${opts.adgroup}`)
-  const res = await gaqlSearch(rp.profile, googleCustomerId(rp.profile),
-    `SELECT ad_group.id, ad_group_criterion.criterion_id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status, ad_group_criterion.effective_cpc_bid_micros, metrics.cost_micros, metrics.conversions FROM keyword_view WHERE ${where.join(' AND ')} ORDER BY metrics.cost_micros DESC`)
+  const res = await gaqlSearch(rp.profile, googleCustomerId(rp.profile), keywordsQuery(opts.adgroup, opts.qs))
   const rows = res.rows.map(r => ({
     id: `${r['adGroup.id']}~${r['adGroupCriterion.criterionId']}`,
     keyword: String(r['adGroupCriterion.keyword.text'] ?? ''),
@@ -21,10 +33,30 @@ export async function runKeywordsList(opts: { profile?: string; adgroup?: string
     bid: Number(r['adGroupCriterion.effectiveCpcBidMicros'] ?? 0),
     cost: Number(r['metrics.costMicros'] ?? 0),
     conv: Number(r['metrics.conversions'] ?? 0),
+    qs: r['adGroupCriterion.qualityInfo.qualityScore'],
+    ctr: r['adGroupCriterion.qualityInfo.searchPredictedCtr'],
+    ad: r['adGroupCriterion.qualityInfo.creativeQualityScore'],
+    lp: r['adGroupCriterion.qualityInfo.postClickQualityScore'],
   }))
   const fmt = formatFromFlags(opts)
   if (fmt === 'json') {
-    console.log(JSON.stringify(rows.map(r => ({ ...r, bid_micros: r.bid, cost_micros: r.cost })), null, 2))
+    console.log(JSON.stringify(rows.map(r => ({
+      id: r.id, keyword: r.keyword, match: r.match, status: r.status,
+      bid_micros: r.bid, cost_micros: r.cost, conv: r.conv,
+      ...(opts.qs ? { quality_score: r.qs ?? null, exp_ctr: r.ctr ?? null, ad_relevance: r.ad ?? null, landing_page: r.lp ?? null } : {}),
+    })), null, 2))
+    return
+  }
+  if (opts.qs) {
+    printTable({
+      columns: ['id', 'keyword', 'qs', 'exp.ctr', 'ad', 'landing', 'cost', 'conv'],
+      rows: rows.map(r => ({
+        id: r.id, keyword: r.keyword,
+        qs: r.qs != null ? String(r.qs) : '—',
+        'exp.ctr': shortQs(r.ctr), ad: shortQs(r.ad), landing: shortQs(r.lp),
+        cost: usd(r.cost), conv: r.conv,
+      })),
+    }, fmt)
     return
   }
   printTable({

@@ -5,8 +5,40 @@ import { formatFromFlags, printTable } from '../core/output.js'
 import { applyPlan, createPlan, type Plan, type Status } from '../core/plan.js'
 import { gaqlSearch } from '../platforms/google.js'
 
-export async function runAdsList(opts: { profile?: string; json?: boolean; csv?: boolean }): Promise<void> {
+/** Pull the human-readable policy topics out of a policy_topic_entries array. */
+export function extractTopics(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  return v.map((e: any) => e?.topic).filter((t: unknown): t is string => typeof t === 'string')
+}
+
+export async function runAdsList(opts: { profile?: string; disapproved?: boolean; json?: boolean; csv?: boolean }): Promise<void> {
   const rp = resolveProfile(opts.profile)
+  const fmt = formatFromFlags(opts)
+
+  if (opts.disapproved) {
+    const res = await gaqlSearch(rp.profile, googleCustomerId(rp.profile),
+      `SELECT ad_group.id, ad_group_ad.ad.id, ad_group_ad.ad.type, campaign.name, ad_group_ad.policy_summary.approval_status, ad_group_ad.policy_summary.policy_topic_entries FROM ad_group_ad WHERE ad_group_ad.policy_summary.approval_status = 'DISAPPROVED' AND ad_group_ad.status != 'REMOVED'`)
+    const rows = res.rows.map(r => ({
+      id: `${r['adGroup.id']}~${r['adGroupAd.ad.id']}`,
+      type: String(r['adGroupAd.ad.type'] ?? ''),
+      campaign: String(r['campaign.name'] ?? ''),
+      reasons: extractTopics(r['adGroupAd.policySummary.policyTopicEntries']),
+    }))
+    if (fmt === 'json') {
+      console.log(JSON.stringify(rows, null, 2))
+      return
+    }
+    if (!rows.length) {
+      console.log('no disapproved ads')
+      return
+    }
+    printTable({
+      columns: ['id', 'type', 'campaign', 'reasons'],
+      rows: rows.map(r => ({ id: r.id, type: r.type, campaign: r.campaign, reasons: r.reasons.join(', ') || '—' })),
+    }, fmt)
+    return
+  }
+
   const res = await gaqlSearch(rp.profile, googleCustomerId(rp.profile),
     `SELECT ad_group.id, ad_group_ad.ad.id, ad_group_ad.ad.type, ad_group_ad.status, campaign.name, metrics.cost_micros FROM ad_group_ad WHERE ad_group_ad.status != 'REMOVED' AND segments.date DURING LAST_30_DAYS ORDER BY metrics.cost_micros DESC`)
   const rows = res.rows.map(r => ({
@@ -16,7 +48,6 @@ export async function runAdsList(opts: { profile?: string; json?: boolean; csv?:
     campaign: String(r['campaign.name'] ?? ''),
     cost: Number(r['metrics.costMicros'] ?? 0),
   }))
-  const fmt = formatFromFlags(opts)
   if (fmt === 'json') {
     console.log(JSON.stringify(rows.map(r => ({ ...r, cost_micros: r.cost })), null, 2))
     return

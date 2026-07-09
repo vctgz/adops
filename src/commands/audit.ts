@@ -2,6 +2,7 @@ import { googleCustomerId, metaAdAccount, resolveProfile } from '../core/config.
 import { formatFromFlags, printTable } from '../core/output.js'
 import { gaqlSearch } from '../platforms/google.js'
 import { campaigns as metaCampaigns, insights } from '../platforms/meta.js'
+import { extractTopics } from './ads.js'
 
 export interface Finding {
   check: string
@@ -22,14 +23,18 @@ export async function runAudit(opts: { profile?: string; strict?: boolean; json?
     const cid = googleCustomerId(rp.profile)
 
     const disapproved = await gaqlSearch(rp.profile, cid,
-      `SELECT campaign.name, ad_group_ad.ad.id FROM ad_group_ad WHERE ad_group_ad.policy_summary.approval_status = 'DISAPPROVED' AND campaign.status = 'ENABLED'`)
-    const byCampaign = new Map<string, number>()
+      `SELECT campaign.name, ad_group_ad.ad.id, ad_group_ad.policy_summary.policy_topic_entries FROM ad_group_ad WHERE ad_group_ad.policy_summary.approval_status = 'DISAPPROVED' AND campaign.status = 'ENABLED'`)
+    const byCampaign = new Map<string, { n: number; topics: Set<string> }>()
     for (const r of disapproved.rows) {
       const name = String(r['campaign.name'] ?? '?')
-      byCampaign.set(name, (byCampaign.get(name) ?? 0) + 1)
+      const agg = byCampaign.get(name) ?? { n: 0, topics: new Set<string>() }
+      agg.n += 1
+      for (const t of extractTopics(r['adGroupAd.policySummary.policyTopicEntries'])) agg.topics.add(t)
+      byCampaign.set(name, agg)
     }
-    for (const [name, n] of byCampaign) {
-      findings.push({ check: 'disapproved-ads', platform: 'google', entity: name, detail: `${n} disapproved ad(s)` })
+    for (const [name, { n, topics }] of byCampaign) {
+      const why = topics.size ? `: ${[...topics].join(', ')}` : ''
+      findings.push({ check: 'disapproved-ads', platform: 'google', entity: name, detail: `${n} disapproved ad(s)${why}` })
     }
 
     const capped = await gaqlSearch(rp.profile, cid,

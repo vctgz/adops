@@ -20,6 +20,8 @@ export type PlanOp =
   | { kind: 'google.keyword.set_status'; customerId: string; criterion: string; status: Status; describe: string }
   | { kind: 'google.keyword.update_bid'; customerId: string; criterion: string; cpcBidMicros: number; describe: string }
   | { kind: 'google.ad.set_status'; customerId: string; adGroupAd: string; status: Status; describe: string }
+  | { kind: 'google.ad_group.set_status'; customerId: string; adGroupId: string; status: Status; describe: string }
+  | { kind: 'google.ad_group_negative.create'; customerId: string; adGroupId: string; text: string; matchType: MatchType; describe: string }
 
 interface Mutation { customerId: string; resource: string; operation: Record<string, unknown> }
 
@@ -55,6 +57,14 @@ function opToMutation(op: PlanOp): Mutation {
     case 'google.ad.set_status':
       return { customerId: op.customerId, resource: 'adGroupAds', operation: {
         update: { resourceName: rn(op.customerId, 'adGroupAds', op.adGroupAd), status: op.status }, updateMask: 'status',
+      } }
+    case 'google.ad_group.set_status':
+      return { customerId: op.customerId, resource: 'adGroups', operation: {
+        update: { resourceName: rn(op.customerId, 'adGroups', op.adGroupId), status: op.status }, updateMask: 'status',
+      } }
+    case 'google.ad_group_negative.create':
+      return { customerId: op.customerId, resource: 'adGroupCriteria', operation: {
+        create: { adGroup: rn(op.customerId, 'adGroups', op.adGroupId), negative: true, keyword: { text: op.text, matchType: op.matchType } },
       } }
     default:
       throw new Error(`plan contains an op kind this version cannot apply: ${(op as PlanOp).kind}`)

@@ -2,11 +2,14 @@
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { runAccounts } from './commands/accounts.js'
+import { runAdgroupsList, runAdgroupsStatus } from './commands/adgroups.js'
 import { runAdsList, runAdsStatus } from './commands/ads.js'
 import { runAudit } from './commands/audit.js'
 import { runAuthGoogle, runAuthMeta } from './commands/auth.js'
 import { runBudgetsList, runBudgetsSet } from './commands/budgets.js'
 import { runCampaignsList, runCampaignsStatus } from './commands/campaigns.js'
+import { runChanges } from './commands/changes.js'
+import { runDoctor } from './commands/doctor.js'
 import { runExport } from './commands/export.js'
 import { runFatigue } from './commands/fatigue.js'
 import { runInsights } from './commands/insights.js'
@@ -19,12 +22,15 @@ import { runSpend } from './commands/spend.js'
 import { runTerms } from './commands/terms.js'
 import { runUrlsCheck } from './commands/urls.js'
 import { runWatch } from './commands/watch.js'
+import { setDebug } from './core/http.js'
 
 const program = new Command('adops')
 program
-  .version('0.1.0')
+  .version('0.2.0')
   .description('The Google Ads CLI Google never shipped — plus a cross-platform reporting layer for Meta. Reads are free; writes plan first.')
   .option('-p, --profile <name>', 'profile from ~/.config/adops/config.toml')
+  .option('--debug', 'dump raw API requests and error bodies to stderr')
+  .hook('preAction', () => { if (program.opts().debug) setDebug(true) })
 
 type Fn = (...args: any[]) => Promise<number | void>
 const wrap = (fn: Fn) => async (...args: any[]) => {
@@ -50,12 +56,17 @@ auth.command('meta')
   .action(wrap(async (opts: any) => runAuthMeta(opts)))
 
 // -- cross-platform -----------------------------------------------------------
+program.command('doctor').description('check auth/config/API connectivity, step by step')
+  .action(wrap(async (_o: any, cmd: any) => runDoctor(g(cmd))))
+
 program.command('accounts').description('list accessible accounts, both platforms')
   .option('--json').option('--csv')
   .action(wrap(async (_o: any, cmd: any) => runAccounts(g(cmd))))
 
 program.command('report').description('cross-platform campaign report')
   .argument('[preset]', 'last-7d | last-30d | mtd', 'last-7d')
+  .option('--vs <period>', "compare to the prior equal window: 'prior'")
+  .option('--as-of <date>', 'YYYY-MM-DD (testing/backfill)')
   .option('--json').option('--csv')
   .action(wrap(async (preset: string, _o: any, cmd: any) => runReport(preset, g(cmd))))
 
@@ -109,8 +120,22 @@ campaigns.command('pause').requiredOption('--id <ids>', 'comma/space separated c
 campaigns.command('enable').requiredOption('--id <ids>').option('--apply')
   .action(wrap(async (_o: any, cmd: any) => runCampaignsStatus('enable', g(cmd))))
 
+const adgroups = gads.command('adgroups').description('list and bulk pause/enable ad groups')
+adgroups.command('list').option('--campaign <id>', 'filter to one campaign').option('--json').option('--csv')
+  .action(wrap(async (_o: any, cmd: any) => runAdgroupsList(g(cmd))))
+adgroups.command('pause').requiredOption('--id <ids>', 'comma/space separated ad group ids').option('--apply')
+  .action(wrap(async (_o: any, cmd: any) => runAdgroupsStatus('pause', g(cmd))))
+adgroups.command('enable').requiredOption('--id <ids>').option('--apply')
+  .action(wrap(async (_o: any, cmd: any) => runAdgroupsStatus('enable', g(cmd))))
+
+gads.command('changes').description('change history — who touched what (last 30 days)')
+  .option('--last <preset>', 'today | 7d | 14d | 30d', '7d')
+  .option('--user <email>', 'filter to one user')
+  .option('--json').option('--csv')
+  .action(wrap(async (_o: any, cmd: any) => runChanges(g(cmd))))
+
 const keywords = gads.command('keywords').description('list, add, pause/enable, and re-bid keywords')
-keywords.command('list').option('--adgroup <id>', 'filter to one ad group').option('--json').option('--csv')
+keywords.command('list').option('--adgroup <id>', 'filter to one ad group').option('--qs', 'show Quality Score + components').option('--json').option('--csv')
   .action(wrap(async (_o: any, cmd: any) => runKeywordsList(g(cmd))))
 keywords.command('add').description('stage positive keywords into an ad group')
   .requiredOption('--adgroup <id>').requiredOption('--terms <list>', 'comma-separated')
@@ -125,7 +150,7 @@ keywords.command('bid').description('stage a max-CPC change')
   .action(wrap(async (_o: any, cmd: any) => runKeywordsBid(g(cmd))))
 
 const ads = gads.command('ads').description('list and bulk pause/enable ads')
-ads.command('list').option('--json').option('--csv')
+ads.command('list').option('--disapproved', 'only disapproved ads, with policy reasons').option('--json').option('--csv')
   .action(wrap(async (_o: any, cmd: any) => runAdsList(g(cmd))))
 ads.command('pause').requiredOption('--id <ids>', 'adGroupId~adId, comma/space separated').option('--apply')
   .action(wrap(async (_o: any, cmd: any) => runAdsStatus('pause', g(cmd))))
@@ -136,20 +161,23 @@ gads.command('terms').description('search-terms waste finder')
   .option('--last <preset>', '7d | 14d | 30d', '30d')
   .option('--min-cost <usd>')
   .option('--conv <n>', 'max conversions (e.g. 0)')
+  .option('--ngrams <sizes>', 'roll up into word patterns, e.g. "1,2,3"')
   .option('--json').option('--csv')
   .action(wrap(async (_o: any, cmd: any) => runTerms(g(cmd))))
 
-const negatives = gads.command('negatives').description('campaign-level negative keywords')
+const negatives = gads.command('negatives').description('campaign- or ad-group-level negative keywords')
 negatives.command('plan').description('stage negatives from stdin JSON or --terms')
   .argument('[source]', 'use - to read JSON from stdin')
   .option('--terms <list>', 'comma-separated terms')
-  .requiredOption('--campaign <id>')
+  .option('--campaign <id>', 'campaign-level negatives')
+  .option('--adgroup <id>', 'ad-group-level negatives')
   .option('--match <type>', 'exact | phrase | broad', 'exact')
   .action(wrap(async (source: string | undefined, _o: any, cmd: any) => runNegatives('plan', source, g(cmd))))
 negatives.command('add').description('like plan, but --apply executes immediately')
   .argument('[source]', 'use - to read JSON from stdin')
   .option('--terms <list>')
-  .requiredOption('--campaign <id>')
+  .option('--campaign <id>', 'campaign-level negatives')
+  .option('--adgroup <id>', 'ad-group-level negatives')
   .option('--match <type>', 'exact | phrase | broad', 'exact')
   .option('--apply')
   .action(wrap(async (source: string | undefined, _o: any, cmd: any) => runNegatives('add', source, g(cmd))))
